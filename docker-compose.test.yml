@@ -1,0 +1,21 @@
+services:
+  backend:
+    build: ./backend
+    command: ["python", "-m", "pytest", "-q"]
+    environment:
+      - MONGODB_URI=mongodb://mongodb:27017
+      - MONGODB_DATABASE=softarchitect_ai
+      - JWT_SECRET=testing_secret
+      - LLM_PROVIDER=mock
+      - DEMO_MODE=true
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+  mongodb:
+    image: mongo:6.0
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
