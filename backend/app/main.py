@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config.settings import settings
-from app.api import auth, projects, requirement_analysis, technology_recommendations, architecture
+from app.api import auth, projects, requirement_analysis, technology_recommendations, architecture, database_design, api_design, diagrams, datasets, documentation
 from app.database.mongodb import close_client, get_client, get_database
 from app.database.indexes import create_indexes
 
@@ -21,6 +21,11 @@ app.include_router(projects.router)
 app.include_router(requirement_analysis.router)
 app.include_router(technology_recommendations.router)
 app.include_router(architecture.router)
+app.include_router(database_design.router)
+app.include_router(api_design.router)
+app.include_router(diagrams.router)
+app.include_router(datasets.router)
+app.include_router(documentation.router)
 
 @app.on_event("startup")
 async def startup_event():

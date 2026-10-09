@@ -10,8 +10,13 @@ async def create_indexes():
     await db["requirements"].create_index([("project_id", 1), ("created_at", -1)])
     await db["technology_recommendations"].create_index([("project_id", 1), ("created_at", -1)])
     await db["architectures"].create_index([("project_id", 1), ("created_at", -1)])
+    await db["database_designs"].create_index([("project_id", 1), ("created_at", -1)])
+    await db["api_designs"].create_index([("project_id", 1), ("created_at", -1)])
+    await db["diagrams"].create_index([("project_id", 1), ("created_at", -1)])
     # datasets
     await db["datasets"].create_index("project_id")
+    await db["dataset_versions"].create_index([("project_id", 1), ("created_at", -1)])
+    await db["documentation"].create_index([("project_id", 1), ("created_at", -1)])
     # agent_runs
     await db["agent_runs"].create_index("project_id")
     print("Indexes created.")
