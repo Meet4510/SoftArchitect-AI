@@ -124,7 +124,11 @@ async def test_dataset_routes_generate_load_and_enforce_ownership(monkeypatch):
         "name": "QuickBite",
         "requirements": REQUIREMENTS,
     }
-    saved_design = {"id": "database-design-1", "database_design": design.dict()}
+    saved_design = {
+        "id": "database-design-1",
+        "source_requirements": project["requirements"],
+        "database_design": design.dict(),
+    }
     counts = {collection.name: 2 for collection in design.collections}
     saved = {}
 
@@ -167,6 +171,13 @@ async def test_dataset_routes_generate_load_and_enforce_ownership(monkeypatch):
             )
             assert fetched.status_code == 200
             assert fetched.json()["project_id"] == "64b000000000000000000001"
+
+            project["requirements"] += " Customers also receive dispatch updates."
+            stale_dataset = await client.get(
+                "/api/v1/projects/64b000000000000000000001/datasets/latest"
+            )
+            assert stale_dataset.status_code == 404
+            assert stale_dataset.json()["detail"]["code"] == "dataset_not_found"
 
         app.dependency_overrides[get_current_user] = lambda: {"id": "user-2", "role": "USER"}
         async with AsyncClient(app=app, base_url="http://test") as client:

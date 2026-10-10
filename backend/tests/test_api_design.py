@@ -83,6 +83,7 @@ async def test_api_design_endpoint_requires_database_design_persists_and_enforce
     }
     database_design = {
         "id": "database-design-1",
+        "source_requirements": project["requirements"],
         "database_design": build_database_design().dict(),
     }
     saved = {}
@@ -97,6 +98,7 @@ async def test_api_design_endpoint_requires_database_design_persists_and_enforce
         saved["document"] = {
             "id": "api-design-1",
             "project_id": project_id,
+            "source_requirements": source,
             "api_design": api_design.dict(),
             "created_at": datetime.utcnow(),
         }
@@ -106,6 +108,7 @@ async def test_api_design_endpoint_requires_database_design_persists_and_enforce
         return saved.get("document")
 
     monkeypatch.setattr("app.api.api_design.get_project", fake_get_project)
+    monkeypatch.setattr("app.api.api_design.gemini_enabled", lambda: False)
     monkeypatch.setattr("app.api.api_design.get_latest_database_design", fake_get_database_design)
     monkeypatch.setattr("app.api.api_design.save_api_design", fake_save)
     monkeypatch.setattr("app.api.api_design.get_latest_api_design", fake_get_latest)
@@ -121,6 +124,14 @@ async def test_api_design_endpoint_requires_database_design_persists_and_enforce
 
             fetched = await client.get("/api/v1/projects/project-1/api-design")
             assert fetched.status_code == 200
+
+            project["requirements"] += " Customers also receive dispatch updates."
+            stale_design = await client.get("/api/v1/projects/project-1/api-design")
+            assert stale_design.status_code == 404
+            assert stale_design.json()["detail"]["code"] == "api_design_not_found"
+            project["requirements"] = project["requirements"].removesuffix(
+                " Customers also receive dispatch updates."
+            )
 
             monkeypatch.setattr(
                 "app.api.api_design.get_latest_database_design",

@@ -3,8 +3,11 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
+from app.api.artifact_freshness import require_current_requirements
 from app.agents.requirement_analysis import analyze_requirements
 from app.auth.deps import get_current_user
+from app.config.settings import settings
+from app.llm.gemini import GeminiProviderError, generate_requirement_analysis
 from app.models.project import get_project, update_project
 from app.models.requirement_analysis import (
     get_latest_requirement_analysis,
@@ -57,7 +60,30 @@ async def analyze_project_requirements(
             },
         )
 
-    analysis = analyze_requirements(source, project.get("name", "Project"))
+    if not settings.DEMO_MODE and settings.LLM_PROVIDER.lower() == "gemini":
+        try:
+            analysis = await generate_requirement_analysis(
+                source,
+                project.get("name", "Project"),
+            )
+        except GeminiProviderError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={
+                    "code": "llm_provider_error",
+                    "message": str(exc),
+                },
+            ) from exc
+    elif settings.DEMO_MODE or settings.LLM_PROVIDER.lower() == "mock":
+        analysis = analyze_requirements(source, project.get("name", "Project"))
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "llm_provider_not_supported",
+                "message": f'LLM provider "{settings.LLM_PROVIDER}" is not supported.',
+            },
+        )
     if payload.requirements is not None:
         await update_project(project_id, {"requirements": payload.requirements})
 
@@ -95,12 +121,12 @@ async def get_project_requirement_analysis(
             detail={"code": "forbidden", "message": "Not allowed to view this project"},
         )
 
-    saved = await get_latest_requirement_analysis(project_id)
-    if not saved:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "analysis_not_found", "message": "No requirement analysis exists for this project"},
-        )
+    saved = require_current_requirements(
+        await get_latest_requirement_analysis(project_id),
+        project.get("requirements") or "",
+        "analysis_not_found",
+        "No current requirement analysis exists for this project's requirements.",
+    )
     return {
         **saved["analysis"],
         "id": saved["id"],

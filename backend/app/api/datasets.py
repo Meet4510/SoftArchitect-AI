@@ -1,6 +1,7 @@
 from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from app.api.artifact_freshness import requirements_match
 from app.agents.dataset_generator import generate_synthetic_dataset
 from app.auth.deps import get_current_user
 from app.agents.database_design import design_mongodb_schema
@@ -55,7 +56,7 @@ async def generate_project_dataset(
 ):
     project = await _get_accessible_project(project_id, user)
     saved_design = await get_latest_database_design(project_id)
-    if not saved_design:
+    if not requirements_match(saved_design, (project.get("requirements") or "").strip()):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -116,14 +117,23 @@ async def generate_project_dataset(
 
 @router.get("/{project_id}/datasets/latest", response_model=SyntheticDatasetOut)
 async def fetch_project_dataset(project_id: str, user=Depends(get_current_user)):
-    await _get_accessible_project(project_id, user)
+    project = await _get_accessible_project(project_id, user)
     saved = await get_latest_dataset(project_id)
-    if not saved:
+    current_design = await get_latest_database_design(project_id)
+    dataset_is_current = (
+        saved
+        and requirements_match(
+            current_design,
+            (project.get("requirements") or "").strip(),
+        )
+        and saved["dataset"].get("source_database_design_id") == current_design.get("id")
+    )
+    if not dataset_is_current:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={
                 "code": "dataset_not_found",
-                "message": "No synthetic dataset has been generated for this project.",
+                "message": "No current synthetic dataset exists for this project's database design.",
             },
         )
     return _dataset_response(saved)

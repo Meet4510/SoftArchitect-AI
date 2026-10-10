@@ -83,6 +83,7 @@ async def test_architecture_generation_requires_stack_and_saves_owner_scoped_res
     saved = {}
     recommendation = {
         "id": "technology-1",
+        "source_requirements": project["requirements"],
         "recommendation": sample_technology_recommendation().dict(),
     }
 
@@ -96,6 +97,7 @@ async def test_architecture_generation_requires_stack_and_saves_owner_scoped_res
         saved["document"] = {
             "id": "architecture-1",
             "project_id": project_id,
+            "source_requirements": source,
             "architecture": architecture.dict(),
             "created_at": datetime.utcnow(),
         }
@@ -105,6 +107,7 @@ async def test_architecture_generation_requires_stack_and_saves_owner_scoped_res
         return saved.get("document")
 
     monkeypatch.setattr("app.api.architecture.get_project", fake_get_project)
+    monkeypatch.setattr("app.api.architecture.gemini_enabled", lambda: False)
     monkeypatch.setattr("app.api.architecture.get_latest_technology_recommendation", fake_get_technology)
     monkeypatch.setattr("app.api.architecture.save_architecture", fake_save)
     monkeypatch.setattr("app.api.architecture.get_latest_architecture", fake_get_latest)
@@ -120,6 +123,14 @@ async def test_architecture_generation_requires_stack_and_saves_owner_scoped_res
             fetched = await client.get("/api/v1/projects/project-1/architecture")
             assert fetched.status_code == 200
             assert fetched.json()["id"] == "architecture-1"
+
+            project["requirements"] += " Customers also receive dispatch updates."
+            stale_architecture = await client.get("/api/v1/projects/project-1/architecture")
+            assert stale_architecture.status_code == 404
+            assert stale_architecture.json()["detail"]["code"] == "architecture_not_found"
+            project["requirements"] = project["requirements"].removesuffix(
+                " Customers also receive dispatch updates."
+            )
 
             monkeypatch.setattr(
                 "app.api.architecture.get_latest_technology_recommendation",

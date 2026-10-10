@@ -1,12 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from app.api.artifact_freshness import requirements_match, require_current_requirements
+from app.api.llm import gemini_enabled, generate_gemini_blueprint
 from app.agents.database_design import design_mongodb_schema
 from app.auth.deps import get_current_user
 from app.models.architecture import get_latest_architecture
 from app.models.database_design import get_latest_database_design, save_database_design
 from app.models.project import get_project
 from app.schemas.architecture import SoftwareArchitecture
-from app.schemas.database_design import MongoDatabaseDesignOut
+from app.schemas.database_design import MongoDatabaseDesign, MongoDatabaseDesignOut
 
 router = APIRouter(prefix="/api/v1/projects", tags=["MongoDB database design"])
 
@@ -40,7 +42,7 @@ async def generate_project_database_design(project_id: str, user=Depends(get_cur
         )
 
     saved_architecture = await get_latest_architecture(project_id)
-    if not saved_architecture:
+    if not requirements_match(saved_architecture, requirements):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -50,11 +52,27 @@ async def generate_project_database_design(project_id: str, user=Depends(get_cur
         )
 
     architecture = SoftwareArchitecture(**saved_architecture["architecture"])
-    database_design = design_mongodb_schema(
-        requirements,
-        project.get("name", "Project"),
-        architecture,
-    )
+    if gemini_enabled():
+        database_design = await generate_gemini_blueprint(
+            "MongoDB database designer. Create a normalized document-oriented data model "
+            "with valid collection references, MongoDB BSON types, useful indexes, and a "
+            "Chen ERD in Mermaid flowchart syntax. The mermaid_diagram must include classDef "
+            "erEntity, erRelationship, erAttribute, erKey; use :::erEntity and PK labels, "
+            "and show each relationship with its diamond and cardinalities. Foreign keys must "
+            "reference declared fields in declared collections.",
+            {
+                "project_name": project.get("name", "Project"),
+                "requirements": requirements,
+                "architecture": architecture.dict(),
+            },
+            MongoDatabaseDesign,
+        )
+    else:
+        database_design = design_mongodb_schema(
+            requirements,
+            project.get("name", "Project"),
+            architecture,
+        )
     saved = await save_database_design(
         project_id,
         str(user.get("id")),
@@ -72,16 +90,13 @@ async def generate_project_database_design(project_id: str, user=Depends(get_cur
 
 @router.get("/{project_id}/database-design", response_model=MongoDatabaseDesignOut)
 async def get_project_database_design(project_id: str, user=Depends(get_current_user)):
-    await _get_accessible_project(project_id, user)
-    saved = await get_latest_database_design(project_id)
-    if not saved:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "code": "database_design_not_found",
-                "message": "No MongoDB database design has been generated for this project.",
-            },
-        )
+    project = await _get_accessible_project(project_id, user)
+    saved = require_current_requirements(
+        await get_latest_database_design(project_id),
+        project.get("requirements") or "",
+        "database_design_not_found",
+        "No current MongoDB database design exists for this project's requirements.",
+    )
     return {
         **saved["database_design"],
         "id": saved["id"],

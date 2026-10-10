@@ -17,6 +17,7 @@ export type ProjectDraft = {
 export type RequirementAnalysis = {
   id?: string
   project_id: string
+  source_requirements?: string
   created_at: string
   project_summary: string
   functional_requirements: string[]
@@ -40,6 +41,7 @@ export type TechnologyChoice = {
 export type TechnologyRecommendation = {
   id?: string
   project_id: string
+  source_requirements?: string
   created_at: string
   project_summary: string
   recommendations: TechnologyChoice[]
@@ -62,6 +64,7 @@ export type ArchitectureConnection = {
 export type SoftwareArchitecture = {
   id?: string
   project_id: string
+  source_requirements?: string
   created_at: string
   project_summary: string
   architectural_style: string
@@ -103,6 +106,7 @@ export type DatabaseRelationship = {
 export type MongoDatabaseDesign = {
   id?: string
   project_id: string
+  source_requirements?: string
   created_at: string
   project_summary: string
   database_name: string
@@ -139,6 +143,7 @@ export type ApiEndpoint = {
 export type RestApiDesign = {
   id?: string
   project_id: string
+  source_requirements?: string
   created_at: string
   project_summary: string
   api_title: string
@@ -153,6 +158,7 @@ export type RestApiDesign = {
 export type ProjectDiagrams = {
   id?: string
   project_id: string
+  source_requirements?: string
   created_at: string
   project_summary: string
   diagrams: {
@@ -172,6 +178,7 @@ export type SyntheticCollectionData = {
 export type SyntheticDataset = {
   id?: string
   project_id: string
+  source_requirements?: string
   created_at: string
   project_summary: string
   source_database_design_id: string
@@ -198,6 +205,7 @@ export type DocumentationRisk = {
 export type ProjectDocumentation = {
   id?: string
   project_id: string
+  source_requirements?: string
   created_at: string
   project_summary: string
   generation_prompt: string
@@ -321,6 +329,47 @@ function saveDemoProjects(projects: Project[]): void {
   localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects))
 }
 
+function findCurrentDemoArtifact<T extends { project_id: string; source_requirements?: string }>(
+  artifacts: T[],
+  projectId: string,
+  requirements?: string,
+): T | undefined {
+  const currentRequirements = requirements
+    ?? readDemoProjects().find((project) => project.id === projectId)?.requirements
+  if (currentRequirements === undefined) return undefined
+  return artifacts.find((artifact) => (
+    artifact.project_id === projectId
+    && artifact.source_requirements?.trim() === currentRequirements.trim()
+  ))
+}
+
+function invalidateDemoArtifacts(projectId: string): void {
+  const artifactKeys = [
+    REQUIREMENT_ANALYSES_KEY,
+    TECHNOLOGY_RECOMMENDATIONS_KEY,
+    ARCHITECTURES_KEY,
+    DATABASE_DESIGNS_KEY,
+    API_DESIGNS_KEY,
+    DIAGRAMS_KEY,
+    DATASETS_KEY,
+    DOCUMENTATION_KEY,
+  ]
+  for (const key of artifactKeys) {
+    const stored = localStorage.getItem(key)
+    if (!stored) continue
+    try {
+      const artifacts: unknown = JSON.parse(stored)
+      if (!Array.isArray(artifacts)) throw new Error(`Saved artifacts in ${key} are invalid.`)
+      localStorage.setItem(
+        key,
+        JSON.stringify(artifacts.filter((artifact) => artifact?.project_id !== projectId)),
+      )
+    } catch {
+      localStorage.removeItem(key)
+    }
+  }
+}
+
 function toAuthUser(value: Partial<AuthUser>): AuthUser {
   if (!value.id || !value.name || !value.email) {
     throw new Error('The server returned an incomplete user profile.')
@@ -428,6 +477,9 @@ export async function updateProject(token: string, projectId: string, draft: Pro
     const index = projects.findIndex((project) => project.id === projectId)
     if (index < 0) throw new Error('Project not found.')
     const updated = normalizeProject({ ...projects[index], ...draft, updated_at: new Date().toISOString() })
+    if (updated.requirements.trim() !== projects[index].requirements.trim()) {
+      invalidateDemoArtifacts(projectId)
+    }
     projects[index] = updated
     saveDemoProjects(projects)
     return updated
@@ -482,7 +534,7 @@ export async function fetchProjectRequirementAnalysis(
   projectId: string,
 ): Promise<RequirementAnalysis> {
   if (token === DEMO_TOKEN) {
-    const saved = readDemoAnalyses().find((item) => item.project_id === projectId)
+    const saved = findCurrentDemoArtifact(readDemoAnalyses(), projectId)
     if (!saved) throw new Error('No saved requirement analysis exists for this project.')
     return saved
   }
@@ -544,8 +596,7 @@ export async function fetchProjectTechnologyRecommendation(
   projectId: string,
 ): Promise<TechnologyRecommendation> {
   if (token === DEMO_TOKEN) {
-    const stored = readDemoTechnologyRecommendations()
-      .find((item) => item.project_id === projectId)
+    const stored = findCurrentDemoArtifact(readDemoTechnologyRecommendations(), projectId)
     if (!stored) throw new Error('No saved technology recommendation exists for this project.')
     return stored
   }
@@ -558,8 +609,7 @@ export async function fetchProjectTechnologyRecommendation(
     return response.data as TechnologyRecommendation
   } catch (error) {
     if (isOfflineError(error)) {
-      const stored = readDemoTechnologyRecommendations()
-        .find((item) => item.project_id === projectId)
+      const stored = findCurrentDemoArtifact(readDemoTechnologyRecommendations(), projectId)
       if (stored) return stored
     }
     throw error
@@ -600,7 +650,7 @@ export async function fetchProjectArchitecture(
   projectId: string,
 ): Promise<SoftwareArchitecture> {
   if (token === DEMO_TOKEN) {
-    const saved = readDemoArchitectures().find((item) => item.project_id === projectId)
+    const saved = findCurrentDemoArtifact(readDemoArchitectures(), projectId)
     if (!saved) throw new Error('No saved software architecture exists for this project.')
     return saved
   }
@@ -613,7 +663,7 @@ export async function fetchProjectArchitecture(
     return response.data as SoftwareArchitecture
   } catch (error) {
     if (isOfflineError(error)) {
-      const saved = readDemoArchitectures().find((item) => item.project_id === projectId)
+      const saved = findCurrentDemoArtifact(readDemoArchitectures(), projectId)
       if (saved) return saved
     }
     throw error
@@ -663,10 +713,10 @@ function isMissingSavedResult(error: unknown, code: string): boolean {
 }
 
 function createOfflineDatabaseDesign(project: Project): MongoDatabaseDesign {
-  if (!readDemoTechnologyRecommendations().some((item) => item.project_id === project.id)) {
+  if (!findCurrentDemoArtifact(readDemoTechnologyRecommendations(), project.id, project.requirements)) {
     createDemoTechnologyRecommendation(project)
   }
-  if (!readDemoArchitectures().some((item) => item.project_id === project.id)) {
+  if (!findCurrentDemoArtifact(readDemoArchitectures(), project.id, project.requirements)) {
     createDemoArchitecture(project)
   }
   return createDemoDatabaseDesign(project)
@@ -677,7 +727,7 @@ export async function fetchProjectDatabaseDesign(
   projectId: string,
 ): Promise<MongoDatabaseDesign> {
   if (token === DEMO_TOKEN) {
-    const saved = readDemoDatabaseDesigns().find((item) => item.project_id === projectId)
+    const saved = findCurrentDemoArtifact(readDemoDatabaseDesigns(), projectId)
     if (!saved) throw new Error('No saved MongoDB database design exists for this project.')
     return saved
   }
@@ -690,7 +740,7 @@ export async function fetchProjectDatabaseDesign(
     return response.data as MongoDatabaseDesign
   } catch (error) {
     if (isOfflineError(error)) {
-      const saved = readDemoDatabaseDesigns().find((item) => item.project_id === projectId)
+      const saved = findCurrentDemoArtifact(readDemoDatabaseDesigns(), projectId)
       if (saved) return saved
     }
     throw error
@@ -730,7 +780,7 @@ export async function generateProjectApiDesign(token: string, project: Project):
 
 export async function fetchProjectApiDesign(token: string, projectId: string): Promise<RestApiDesign> {
   if (token === DEMO_TOKEN) {
-    const saved = readDemoApiDesigns().find((item) => item.project_id === projectId)
+    const saved = findCurrentDemoArtifact(readDemoApiDesigns(), projectId)
     if (!saved) throw new Error('No saved REST API design exists for this project.')
     return saved
   }
@@ -743,7 +793,7 @@ export async function fetchProjectApiDesign(token: string, projectId: string): P
     return response.data as RestApiDesign
   } catch (error) {
     if (isOfflineError(error)) {
-      const saved = readDemoApiDesigns().find((item) => item.project_id === projectId)
+      const saved = findCurrentDemoArtifact(readDemoApiDesigns(), projectId)
       if (saved) return saved
     }
     throw error
@@ -787,7 +837,7 @@ export async function generateProjectDiagrams(token: string, project: Project): 
 
 export async function fetchProjectDiagrams(token: string, projectId: string, project: Project): Promise<ProjectDiagrams> {
   if (token === DEMO_TOKEN) {
-    const saved = readDemoDiagrams().find((item) => item.project_id === projectId)
+    const saved = findCurrentDemoArtifact(readDemoDiagrams(), projectId)
     if (saved && hasCompleteDiagramSet(saved)) return saved
     return regenerateDemoDiagrams(project)
   }
@@ -812,7 +862,7 @@ export async function fetchProjectDiagrams(token: string, projectId: string, pro
       return response.data as ProjectDiagrams
     }
     if (isOfflineError(error)) {
-      const saved = readDemoDiagrams().find((item) => item.project_id === projectId)
+      const saved = findCurrentDemoArtifact(readDemoDiagrams(), projectId)
       if (saved && hasCompleteDiagramSet(saved)) return saved
       return regenerateDemoDiagrams(project)
     }
@@ -882,7 +932,7 @@ export async function generateProjectDataset(
     throw new Error('Choose between 1 and 500 records for each collection.')
   }
   if (token === DEMO_TOKEN) {
-    const design = readDemoDatabaseDesigns().find((item) => item.project_id === project.id)
+    const design = findCurrentDemoArtifact(readDemoDatabaseDesigns(), project.id, project.requirements)
       ?? await generateProjectDatabaseDesign(token, project)
     validateDatasetCounts(design, recordsByCollection)
     return saveDemoDataset(createDemoDataset(project, design, recordsByCollection))
@@ -929,7 +979,7 @@ function validateDatasetCounts(design: MongoDatabaseDesign, counts: Record<strin
 
 export async function fetchProjectDataset(token: string, projectId: string): Promise<SyntheticDataset> {
   if (token === DEMO_TOKEN) {
-    const saved = readDemoDatasets().find((dataset) => dataset.project_id === projectId)
+    const saved = findCurrentDemoArtifact(readDemoDatasets(), projectId)
     if (!saved) throw new Error('No saved synthetic dataset exists for this project.')
     return saved
   }
@@ -942,7 +992,7 @@ export async function fetchProjectDataset(token: string, projectId: string): Pro
     return response.data as SyntheticDataset
   } catch (error) {
     if (isOfflineError(error)) {
-      const saved = readDemoDatasets().find((dataset) => dataset.project_id === projectId)
+      const saved = findCurrentDemoArtifact(readDemoDatasets(), projectId)
       if (saved) return saved
     }
     throw error
@@ -973,7 +1023,7 @@ export async function generateProjectDocumentation(token: string, project: Proje
 
 export async function fetchProjectDocumentation(token: string, projectId: string): Promise<ProjectDocumentation> {
   if (token === DEMO_TOKEN) {
-    const saved = readDemoDocumentation().find((item) => item.project_id === projectId)
+    const saved = findCurrentDemoArtifact(readDemoDocumentation(), projectId)
     if (!saved) throw new Error('No technical documentation exists for this project.')
     return saved
   }
@@ -986,7 +1036,7 @@ export async function fetchProjectDocumentation(token: string, projectId: string
     return response.data as ProjectDocumentation
   } catch (error) {
     if (isOfflineError(error)) {
-      const saved = readDemoDocumentation().find((item) => item.project_id === projectId)
+      const saved = findCurrentDemoArtifact(readDemoDocumentation(), projectId)
       if (saved) return saved
     }
     throw error
@@ -995,10 +1045,10 @@ export async function fetchProjectDocumentation(token: string, projectId: string
 
 function createDemoDocumentation(project: Project, prompt: string): ProjectDocumentation {
   const sourceArtifacts = ['project requirements']
-  if (readDemoTechnologyRecommendations().some((item) => item.project_id === project.id)) sourceArtifacts.push('technology recommendations')
-  if (readDemoArchitectures().some((item) => item.project_id === project.id)) sourceArtifacts.push('software architecture')
-  if (readDemoDatabaseDesigns().some((item) => item.project_id === project.id)) sourceArtifacts.push('MongoDB database design')
-  if (readDemoApiDesigns().some((item) => item.project_id === project.id)) sourceArtifacts.push('REST API design')
+  if (findCurrentDemoArtifact(readDemoTechnologyRecommendations(), project.id, project.requirements)) sourceArtifacts.push('technology recommendations')
+  if (findCurrentDemoArtifact(readDemoArchitectures(), project.id, project.requirements)) sourceArtifacts.push('software architecture')
+  if (findCurrentDemoArtifact(readDemoDatabaseDesigns(), project.id, project.requirements)) sourceArtifacts.push('MongoDB database design')
+  if (findCurrentDemoArtifact(readDemoApiDesigns(), project.id, project.requirements)) sourceArtifacts.push('REST API design')
   const roadmap: DocumentationRoadmapPhase[] = [
     {
       title: '1. Confirm scope and acceptance criteria',
@@ -1138,6 +1188,7 @@ function createDemoDocumentation(project: Project, prompt: string): ProjectDocum
   return {
     id: crypto.randomUUID(),
     project_id: project.id,
+    source_requirements: project.requirements,
     created_at: new Date().toISOString(),
     project_summary: project.description || `Software blueprint for ${project.name}.`,
     generation_prompt: prompt,
@@ -1223,10 +1274,11 @@ function createDemoDataset(
   return {
     id: crypto.randomUUID(),
     project_id: project.id,
+    source_requirements: project.requirements,
     created_at: new Date().toISOString(),
     project_summary: project.name,
     source_database_design_id: design.id ?? 'demo-database-design',
-    version: (readDemoDatasets().find((item) => item.project_id === project.id)?.version ?? 0) + 1,
+    version: (findCurrentDemoArtifact(readDemoDatasets(), project.id, project.requirements)?.version ?? 0) + 1,
     records_by_collection: recordsByCollection,
     collections,
   }
@@ -1304,13 +1356,13 @@ function hasCompleteDiagramSet(diagrams: ProjectDiagrams): boolean {
 }
 
 async function regenerateDemoDiagrams(project: Project): Promise<ProjectDiagrams> {
-  const savedDatabaseDesign = readDemoDatabaseDesigns().find((item) => item.project_id === project.id)
+  const savedDatabaseDesign = findCurrentDemoArtifact(readDemoDatabaseDesigns(), project.id, project.requirements)
   const databaseDesign = savedDatabaseDesign?.mermaid_diagram.includes('classDef erEntity')
     ? savedDatabaseDesign
     : await generateProjectDatabaseDesign(DEMO_TOKEN, project)
-  const apiDesign = readDemoApiDesigns().find((item) => item.project_id === project.id)
+  const apiDesign = findCurrentDemoArtifact(readDemoApiDesigns(), project.id, project.requirements)
     ?? await generateProjectApiDesign(DEMO_TOKEN, project)
-  const architecture = readDemoArchitectures().find((item) => item.project_id === project.id)
+  const architecture = findCurrentDemoArtifact(readDemoArchitectures(), project.id, project.requirements)
     ?? await generateProjectArchitecture(DEMO_TOKEN, project)
   return saveDemoDiagrams(createDemoDiagrams(project, databaseDesign, apiDesign, architecture))
 }
@@ -1447,6 +1499,7 @@ function createDemoDiagrams(
   }
   return {
     project_id: project.id,
+    source_requirements: project.requirements,
     created_at: new Date().toISOString(),
     project_summary: `UML and workflow diagrams for ${project.name}, derived from its requirements, saved API contract, and MongoDB design.`,
     diagrams: [
@@ -1616,6 +1669,7 @@ function createDemoApiDesign(project: Project, databaseDesign: MongoDatabaseDesi
   const apiTitle = `${project.name} API`
   const design: RestApiDesign = {
     project_id: project.id,
+    source_requirements: project.requirements,
     created_at: createdAt,
     project_summary: `Versioned REST API for ${project.name}, derived from the validated MongoDB collection design.`,
     api_title: apiTitle,
@@ -1757,7 +1811,11 @@ function legacyForeignKeys(collectionName: string): CollectionDesign['foreign_ke
 }
 
 function createDemoDatabaseDesign(project: Project): MongoDatabaseDesign {
-  const architecture = readDemoArchitectures().find((item) => item.project_id === project.id)
+  const architecture = findCurrentDemoArtifact(
+    readDemoArchitectures(),
+    project.id,
+    project.requirements,
+  )
   if (!architecture) throw new Error('Generate and save the software architecture before the MongoDB database design.')
 
   const text = `${project.requirements} ${architecture.components.map((component) => component.name).join(' ')}`.toLowerCase()
@@ -1967,6 +2025,7 @@ function createDemoDatabaseDesign(project: Project): MongoDatabaseDesign {
 
   const design: MongoDatabaseDesign = {
     project_id: project.id,
+    source_requirements: project.requirements,
     created_at: new Date().toISOString(),
     project_summary: `MongoDB document model for ${project.name}, derived from its functional workflows and generated architecture.`,
     database_name: 'softarchitect_ai',
@@ -2234,6 +2293,7 @@ function createDeveloperPlatformDatabaseDesign(project: Project): MongoDatabaseD
   })
   const design: MongoDatabaseDesign = {
     project_id: project.id,
+    source_requirements: project.requirements,
     created_at: new Date().toISOString(),
     project_summary: `MongoDB document model for ${project.name}, covering workspaces, coding tasks, agent runs, and reviewable changes.`,
     database_name: 'softarchitect_ai',
@@ -2266,8 +2326,11 @@ function readDemoArchitectures(): SoftwareArchitecture[] {
 }
 
 function createDemoArchitecture(project: Project): SoftwareArchitecture {
-  const technologyRecommendation = readDemoTechnologyRecommendations()
-    .find((item) => item.project_id === project.id)
+  const technologyRecommendation = findCurrentDemoArtifact(
+    readDemoTechnologyRecommendations(),
+    project.id,
+    project.requirements,
+  )
   if (!technologyRecommendation) {
     throw new Error('Generate and save technology recommendations before the software architecture.')
   }
@@ -2338,6 +2401,7 @@ function createDemoArchitecture(project: Project): SoftwareArchitecture {
 
   const architecture: SoftwareArchitecture = {
     project_id: project.id,
+    source_requirements: project.requirements,
     created_at: new Date().toISOString(),
     project_summary: `Proposed system architecture for ${project.name}, grounded in the project requirements and saved technology recommendations.`,
     architectural_style: 'Modular monolith with a responsive web client, authenticated REST API, domain modules, MongoDB persistence, and replaceable external-service adapters.',
@@ -2410,6 +2474,7 @@ function createDeveloperPlatformArchitecture(
   ].join('\n')
   const architecture: SoftwareArchitecture = {
     project_id: project.id,
+    source_requirements: project.requirements,
     created_at: new Date().toISOString(),
     project_summary: `AI software engineering architecture for ${project.name}, based on its workspace, coding-task, agent-run, and code-review requirements.`,
     architectural_style: 'Modular monolith with an authenticated engineering workspace, validated agent workflow, Git provider adapter, approval-gated code proposals, and MongoDB persistence.',
@@ -2509,6 +2574,7 @@ function createDemoTechnologyRecommendation(project: Project): TechnologyRecomme
 
   const recommendation: TechnologyRecommendation = {
     project_id: project.id,
+    source_requirements: project.requirements,
     created_at: new Date().toISOString(),
     project_summary: `Recommended implementation stack for ${project.name}, selected for the stated workflows and the MongoDB-based modular monolith.`,
     recommendations: choices,
@@ -2561,6 +2627,7 @@ function createDemoAnalysis(project: Project): RequirementAnalysis {
 
   return {
     project_id: project.id,
+    source_requirements: project.requirements,
     created_at: new Date().toISOString(),
     project_summary: summary.length > 620 ? `${summary.slice(0, 617).replace(/\s+\S*$/, '')}...` : summary,
     functional_requirements: functionalRequirements,

@@ -18,11 +18,17 @@ def _serialize(document: Optional[Dict[str, Any]]) -> Optional[dict]:
     return serialized
 
 
-async def save_documentation(project_id: str, user_id: str, documentation: TechnicalDocumentation) -> dict:
+async def save_documentation(
+    project_id: str,
+    user_id: str,
+    source_requirements: str,
+    documentation: TechnicalDocumentation,
+) -> dict:
     database = get_database()
     document = {
         "project_id": ObjectId(project_id),
         "user_id": user_id,
+        "source_requirements": source_requirements,
         "documentation": documentation.dict(),
         "created_at": datetime.utcnow(),
     }

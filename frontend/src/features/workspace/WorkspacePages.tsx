@@ -21,6 +21,7 @@ import {
   Workflow,
   X,
   Download,
+  Database,
 } from 'lucide-react'
 import type { Project } from '../../lib/demo-data'
 import {
@@ -105,6 +106,7 @@ export function WorkspaceLayout({
         <div className="mx-auto flex max-w-7xl gap-2 overflow-x-auto px-4 py-2 sm:px-6 lg:px-8">
           <WorkspaceNavLink to="/dashboard" icon={<BarChart3 className="h-4 w-4" />}>Overview</WorkspaceNavLink>
           <WorkspaceNavLink to="/projects" icon={<Layers3 className="h-4 w-4" />}>Projects</WorkspaceNavLink>
+          <WorkspaceNavLink to="/data-lab" icon={<Database className="h-4 w-4" />}>Data Lab</WorkspaceNavLink>
         </div>
       </nav>
       {session.token === 'demo-token' ? (
@@ -175,6 +177,19 @@ export function DashboardPage({ session }: { session: AuthSession }) {
         <OverviewStat label="In progress" value={stats.active} icon={<Workflow className="h-5 w-5" />} tone="blue" />
         <OverviewStat label="Completed" value={stats.completed} icon={<ShieldCheck className="h-5 w-5" />} tone="green" />
         <OverviewStat label="Drafts" value={stats.drafts} icon={<FileText className="h-5 w-5" />} tone="violet" />
+      </section>
+
+      <section className="flex flex-col gap-4 rounded-2xl border border-violet-400/20 bg-gradient-to-r from-violet-500/[0.08] to-cyan-500/[0.04] p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+        <div className="flex items-start gap-3">
+          <span className="rounded-xl bg-violet-400/10 p-2.5 text-violet-200"><Database className="h-5 w-5" /></span>
+          <div>
+            <h2 className="font-semibold text-white">Generate data from your own schema</h2>
+            <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-400">Import a database design or CSV samples and generate downloadable synthetic data without creating a project.</p>
+          </div>
+        </div>
+        <Link to="/data-lab" className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-violet-300/30 px-4 py-2.5 text-sm font-medium text-violet-100 transition hover:bg-violet-400/10">
+          Open Data Lab <ArrowRight className="h-4 w-4" />
+        </Link>
       </section>
 
       <section className="grid gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(280px,0.8fr)]">

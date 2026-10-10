@@ -40,6 +40,8 @@ def test_demo_agent_preserves_role_workflows_and_builds_grounded_modules():
 
 @pytest.mark.asyncio
 async def test_requirement_analysis_is_validated_saved_and_owner_protected(monkeypatch):
+    monkeypatch.setattr("app.api.requirement_analysis.settings.DEMO_MODE", True)
+    monkeypatch.setattr("app.api.requirement_analysis.settings.LLM_PROVIDER", "gemini")
     project = {
         "_id": "project-1",
         "id": "project-1",
@@ -97,6 +99,13 @@ async def test_requirement_analysis_is_validated_saved_and_owner_protected(monke
             assert fetched.status_code == 200
             assert fetched.json()["id"] == "analysis-1"
 
+            project["requirements"] += " Customers also receive dispatch updates."
+            stale_analysis = await client.get(
+                "/api/v1/projects/project-1/requirements/analysis",
+            )
+            assert stale_analysis.status_code == 404
+            assert stale_analysis.json()["detail"]["code"] == "analysis_not_found"
+
             short = await client.post(
                 "/api/v1/projects/project-1/requirements/analyze",
                 json={"requirements": "Too short"},
@@ -123,5 +132,52 @@ async def test_requirement_analysis_is_validated_saved_and_owner_protected(monke
         }
         with pytest.raises(ValueError):
             RequirementAnalysis(**invalid_analysis)
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_gemini_provider_is_used_only_when_explicitly_enabled(monkeypatch):
+    project = {
+        "_id": "project-1",
+        "id": "project-1",
+        "user_id": "user-1",
+        "name": "School Records",
+        "requirements": "A school system manages student records and course enrollment.",
+    }
+    calls = {}
+    expected = analyze_requirements(project["requirements"], project["name"])
+
+    async def fake_get_project(project_id):
+        return project if project_id == "project-1" else None
+
+    async def fake_generate(requirements, project_name):
+        calls["generation"] = (requirements, project_name)
+        return expected
+
+    async def fake_save(project_id, user_id, source, analysis):
+        calls["saved"] = (project_id, user_id, source, analysis)
+        return {
+            "id": "analysis-1",
+            "project_id": project_id,
+            "created_at": datetime.utcnow(),
+            "analysis": analysis.dict(),
+        }
+
+    monkeypatch.setattr("app.api.requirement_analysis.get_project", fake_get_project)
+    monkeypatch.setattr("app.api.requirement_analysis.generate_requirement_analysis", fake_generate)
+    monkeypatch.setattr("app.api.requirement_analysis.save_requirement_analysis", fake_save)
+    monkeypatch.setattr("app.api.requirement_analysis.settings.DEMO_MODE", False)
+    monkeypatch.setattr("app.api.requirement_analysis.settings.LLM_PROVIDER", "gemini")
+    app.dependency_overrides[get_current_user] = lambda: {"id": "user-1", "role": "USER"}
+
+    try:
+        async with AsyncClient(app=app, base_url="http://test") as client:
+            response = await client.post("/api/v1/projects/project-1/requirements/analyze")
+
+        assert response.status_code == 200
+        assert calls["generation"] == (project["requirements"], project["name"])
+        assert calls["saved"][2] == project["requirements"]
+        assert response.json()["id"] == "analysis-1"
     finally:
         app.dependency_overrides.clear()

@@ -98,6 +98,7 @@ async def test_database_design_requires_architecture_saves_and_enforces_ownershi
     )
     architecture = {
         "id": "architecture-1",
+        "source_requirements": project["requirements"],
         "architecture": architecture_model.dict(),
     }
     saved = {}
@@ -112,6 +113,7 @@ async def test_database_design_requires_architecture_saves_and_enforces_ownershi
         saved["document"] = {
             "id": "database-design-1",
             "project_id": project_id,
+            "source_requirements": source,
             "database_design": database_design.dict(),
             "created_at": datetime.utcnow(),
         }
@@ -121,6 +123,7 @@ async def test_database_design_requires_architecture_saves_and_enforces_ownershi
         return saved.get("document")
 
     monkeypatch.setattr("app.api.database_design.get_project", fake_get_project)
+    monkeypatch.setattr("app.api.database_design.gemini_enabled", lambda: False)
     monkeypatch.setattr("app.api.database_design.get_latest_architecture", fake_get_architecture)
     monkeypatch.setattr("app.api.database_design.save_database_design", fake_save)
     monkeypatch.setattr("app.api.database_design.get_latest_database_design", fake_get_latest)
@@ -135,6 +138,14 @@ async def test_database_design_requires_architecture_saves_and_enforces_ownershi
 
             fetched = await client.get("/api/v1/projects/project-1/database-design")
             assert fetched.status_code == 200
+
+            project["requirements"] += " Customers also receive dispatch updates."
+            stale_design = await client.get("/api/v1/projects/project-1/database-design")
+            assert stale_design.status_code == 404
+            assert stale_design.json()["detail"]["code"] == "database_design_not_found"
+            project["requirements"] = project["requirements"].removesuffix(
+                " Customers also receive dispatch updates."
+            )
 
             monkeypatch.setattr(
                 "app.api.database_design.get_latest_architecture",

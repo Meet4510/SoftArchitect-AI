@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from app.api.artifact_freshness import requirements_match, require_current_requirements
+from app.api.llm import gemini_enabled, generate_gemini_blueprint
 from app.agents.architecture import design_architecture
 from app.auth.deps import get_current_user
 from app.models.architecture import get_latest_architecture, save_architecture
 from app.models.project import get_project
 from app.models.technology_recommendation import get_latest_technology_recommendation
-from app.schemas.architecture import SoftwareArchitectureOut
+from app.schemas.architecture import SoftwareArchitecture, SoftwareArchitectureOut
 from app.schemas.technology_recommendation import TechnologyRecommendation
 
 router = APIRouter(prefix="/api/v1/projects", tags=["software architecture"])
@@ -40,7 +42,7 @@ async def generate_project_architecture(project_id: str, user=Depends(get_curren
         )
 
     saved_recommendation = await get_latest_technology_recommendation(project_id)
-    if not saved_recommendation:
+    if not requirements_match(saved_recommendation, requirements):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -50,11 +52,24 @@ async def generate_project_architecture(project_id: str, user=Depends(get_curren
         )
 
     technology_recommendation = TechnologyRecommendation(**saved_recommendation["recommendation"])
-    architecture = design_architecture(
-        requirements=requirements,
-        project_name=project.get("name", "Project"),
-        technology_recommendation=technology_recommendation,
-    )
+    if gemini_enabled():
+        architecture = await generate_gemini_blueprint(
+            "software architect. Design a coherent, appropriately scoped system architecture "
+            "that uses the supplied technology recommendations. Mermaid source must be a valid "
+            "flowchart LR diagram. Connection endpoints must use declared component IDs.",
+            {
+                "project_name": project.get("name", "Project"),
+                "requirements": requirements,
+                "technology_recommendation": technology_recommendation.dict(),
+            },
+            SoftwareArchitecture,
+        )
+    else:
+        architecture = design_architecture(
+            requirements=requirements,
+            project_name=project.get("name", "Project"),
+            technology_recommendation=technology_recommendation,
+        )
     saved = await save_architecture(
         project_id,
         str(user.get("id")),
@@ -72,16 +87,13 @@ async def generate_project_architecture(project_id: str, user=Depends(get_curren
 
 @router.get("/{project_id}/architecture", response_model=SoftwareArchitectureOut)
 async def get_project_architecture(project_id: str, user=Depends(get_current_user)):
-    await _get_accessible_project(project_id, user)
-    saved = await get_latest_architecture(project_id)
-    if not saved:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "code": "architecture_not_found",
-                "message": "No architecture has been generated for this project.",
-            },
-        )
+    project = await _get_accessible_project(project_id, user)
+    saved = require_current_requirements(
+        await get_latest_architecture(project_id),
+        project.get("requirements") or "",
+        "architecture_not_found",
+        "No current architecture exists for this project's requirements.",
+    )
     return {
         **saved["architecture"],
         "id": saved["id"],

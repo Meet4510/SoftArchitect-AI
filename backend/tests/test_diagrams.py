@@ -107,9 +107,21 @@ async def test_diagram_routes_persist_require_api_design_and_enforce_ownership(m
         "requirements": REQUIREMENTS,
     }
     database_design, api_design, architecture = build_source_designs()
-    saved_api = {"id": "api-design-1", "api_design": api_design.dict()}
-    saved_database = {"id": "database-design-1", "database_design": database_design.dict()}
-    saved_architecture = {"id": "architecture-1", "architecture": architecture.dict()}
+    saved_api = {
+        "id": "api-design-1",
+        "source_requirements": project["requirements"],
+        "api_design": api_design.dict(),
+    }
+    saved_database = {
+        "id": "database-design-1",
+        "source_requirements": project["requirements"],
+        "database_design": database_design.dict(),
+    }
+    saved_architecture = {
+        "id": "architecture-1",
+        "source_requirements": project["requirements"],
+        "architecture": architecture.dict(),
+    }
     saved = {}
 
     async def fake_get_project(project_id):
@@ -134,6 +146,7 @@ async def test_diagram_routes_persist_require_api_design_and_enforce_ownership(m
         saved["database_design"] = database_design
         return {
             "id": "database-design-upgraded",
+            "source_requirements": source_requirements,
             "database_design": database_design.dict(),
         }
 
@@ -141,6 +154,7 @@ async def test_diagram_routes_persist_require_api_design_and_enforce_ownership(m
         saved["document"] = {
             "id": "diagrams-1",
             "project_id": project_id,
+            "source_requirements": source,
             "diagram_set": diagram_set.dict(),
             "created_at": datetime.utcnow(),
         }
@@ -150,6 +164,7 @@ async def test_diagram_routes_persist_require_api_design_and_enforce_ownership(m
         return saved.get("document")
 
     monkeypatch.setattr("app.api.diagrams.get_project", fake_get_project)
+    monkeypatch.setattr("app.api.diagrams.gemini_enabled", lambda: False)
     monkeypatch.setattr("app.api.diagrams.get_latest_api_design", fake_get_api_design)
     monkeypatch.setattr("app.api.diagrams.get_latest_database_design", fake_get_database_design)
     monkeypatch.setattr("app.api.diagrams.get_latest_architecture", fake_get_architecture)
@@ -166,6 +181,14 @@ async def test_diagram_routes_persist_require_api_design_and_enforce_ownership(m
 
             fetched = await client.get("/api/v1/projects/project-1/diagrams")
             assert fetched.status_code == 200
+
+            project["requirements"] += " Customers also receive dispatch updates."
+            stale_diagrams = await client.get("/api/v1/projects/project-1/diagrams")
+            assert stale_diagrams.status_code == 404
+            assert stale_diagrams.json()["detail"]["code"] == "diagrams_not_found"
+            project["requirements"] = project["requirements"].removesuffix(
+                " Customers also receive dispatch updates."
+            )
 
             stale_database_design = database_design.dict()
             stale_database_design["mermaid_diagram"] = "erDiagram\n  users {}"
@@ -201,5 +224,6 @@ async def _no_api_design(project_id):
 async def _saved_database_design(database_design):
     return {
         "id": "database-design-stale",
+        "source_requirements": REQUIREMENTS,
         "database_design": database_design,
     }

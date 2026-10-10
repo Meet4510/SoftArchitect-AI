@@ -52,14 +52,16 @@ async def test_documentation_routes_generate_retrieve_and_enforce_ownership(monk
     async def fake_get_project(requested_project_id):
         return project if requested_project_id == project_id else None
 
-    async def fake_get_sources(requested_project_id):
+    async def fake_get_sources(requested_project_id, requirements):
         assert requested_project_id == project_id
+        assert requirements == project["requirements"]
         return (None, None, None, None)
 
-    async def fake_save(requested_project_id, user_id, documentation):
+    async def fake_save(requested_project_id, user_id, source_requirements, documentation):
         saved_document.update({
             "id": "documentation-1",
             "project_id": requested_project_id,
+            "source_requirements": source_requirements,
             "documentation": documentation.dict(),
             "created_at": datetime(2026, 1, 1),
         })
@@ -69,6 +71,7 @@ async def test_documentation_routes_generate_retrieve_and_enforce_ownership(monk
         return saved_document or None
 
     monkeypatch.setattr("app.api.documentation.get_project", fake_get_project)
+    monkeypatch.setattr("app.api.documentation.gemini_enabled", lambda: False)
     monkeypatch.setattr("app.api.documentation._get_sources", fake_get_sources)
     monkeypatch.setattr("app.api.documentation.save_documentation", fake_save)
     monkeypatch.setattr("app.api.documentation.get_latest_documentation", fake_get_latest)
@@ -99,6 +102,14 @@ async def test_documentation_routes_generate_retrieve_and_enforce_ownership(monk
             )
             assert loaded.status_code == 200
             assert loaded.json()["id"] == "documentation-1"
+
+            project["requirements"] += " Customers also receive dispatch updates."
+            stale_documentation = await client.get(
+                f"/api/v1/projects/{project_id}/documentation",
+                headers={"Authorization": "******"},
+            )
+            assert stale_documentation.status_code == 404
+            assert stale_documentation.json()["detail"]["code"] == "documentation_not_found"
 
             app.dependency_overrides[get_current_user] = lambda: {"id": "someone-else", "role": "USER"}
             forbidden = await client.get(

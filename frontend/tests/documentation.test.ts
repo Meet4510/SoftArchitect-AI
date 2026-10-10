@@ -2,12 +2,14 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { demoProjects } from '../src/lib/demo-data'
 import {
   fetchProjectDocumentation,
+  fetchProjectApiDesign,
   generateProjectApiDesign,
   generateProjectArchitecture,
   generateProjectDatabaseDesign,
   generateProjectDiagrams,
   generateProjectDocumentation,
   recommendProjectTechnology,
+  updateProject,
 } from '../src/services/api'
 
 const demoToken = 'demo-token'
@@ -89,5 +91,24 @@ describe('Demo Mode project documentation', () => {
     expect(useCase?.mermaid_source).toContain('Run AI engineering workflow')
     expect(useCase?.mermaid_source).toContain('Review and approve proposed changes')
     expect(JSON.stringify(diagrams.diagrams)).not.toContain('restaurants')
+  })
+
+  it('invalidates stale Demo Mode artifacts when project requirements change', async () => {
+    await recommendProjectTechnology(demoToken, project)
+    await generateProjectArchitecture(demoToken, project)
+    const previousApi = await generateProjectApiDesign(demoToken, project)
+    expect(previousApi.endpoints.map((endpoint) => endpoint.path)).toContain('/api/v1/orders')
+
+    const updatedProject = await updateProject(demoToken, project.id, {
+      name: project.name,
+      requirements: softwareEngineeringProject.requirements,
+    })
+
+    await expect(fetchProjectApiDesign(demoToken, project.id)).rejects.toThrow(
+      'No saved REST API design exists for this project.',
+    )
+    const currentApi = await generateProjectApiDesign(demoToken, updatedProject)
+    expect(currentApi.endpoints.map((endpoint) => endpoint.path)).toContain('/api/v1/tasks')
+    expect(currentApi.endpoints.map((endpoint) => endpoint.path)).not.toContain('/api/v1/orders')
   })
 })

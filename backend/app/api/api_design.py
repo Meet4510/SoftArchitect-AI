@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from app.api.artifact_freshness import requirements_match, require_current_requirements
+from app.api.llm import gemini_enabled, generate_gemini_blueprint
 from app.agents.api_design import design_rest_api
 from app.auth.deps import get_current_user
 from app.models.api_design import get_latest_api_design, save_api_design
 from app.models.database_design import get_latest_database_design
 from app.models.project import get_project
-from app.schemas.api_design import RestApiDesignOut
+from app.schemas.api_design import RestApiDesign, RestApiDesignOut
 from app.schemas.database_design import MongoDatabaseDesign
 
 router = APIRouter(prefix="/api/v1/projects", tags=["REST API design"])
@@ -39,7 +41,7 @@ async def generate_project_api_design(project_id: str, user=Depends(get_current_
             },
         )
     saved_database_design = await get_latest_database_design(project_id)
-    if not saved_database_design:
+    if not requirements_match(saved_database_design, requirements):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -48,11 +50,26 @@ async def generate_project_api_design(project_id: str, user=Depends(get_current_
             },
         )
     database_design = MongoDatabaseDesign(**saved_database_design["database_design"])
-    api_design = design_rest_api(
-        requirements=requirements,
-        project_name=project.get("name", "Project"),
-        database_design=database_design,
-    )
+    if gemini_enabled():
+        api_design = await generate_gemini_blueprint(
+            "REST API architect. Design secure, role-aware REST endpoints and a complete "
+            "OpenAPI 3.0.3 JSON document. Use only GET, POST, PUT, PATCH, DELETE; every endpoint "
+            "must begin with /api/v1/ and be represented in openapi_spec.paths using the "
+            "lowercase HTTP method. Keep API paths and schemas consistent with the supplied "
+            "MongoDB design.",
+            {
+                "project_name": project.get("name", "Project"),
+                "requirements": requirements,
+                "database_design": database_design.dict(),
+            },
+            RestApiDesign,
+        )
+    else:
+        api_design = design_rest_api(
+            requirements=requirements,
+            project_name=project.get("name", "Project"),
+            database_design=database_design,
+        )
     saved = await save_api_design(
         project_id,
         str(user.get("id")),
@@ -70,16 +87,13 @@ async def generate_project_api_design(project_id: str, user=Depends(get_current_
 
 @router.get("/{project_id}/api-design", response_model=RestApiDesignOut)
 async def get_project_api_design(project_id: str, user=Depends(get_current_user)):
-    await _get_accessible_project(project_id, user)
-    saved = await get_latest_api_design(project_id)
-    if not saved:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "code": "api_design_not_found",
-                "message": "No REST API design has been generated for this project.",
-            },
-        )
+    project = await _get_accessible_project(project_id, user)
+    saved = require_current_requirements(
+        await get_latest_api_design(project_id),
+        project.get("requirements") or "",
+        "api_design_not_found",
+        "No current REST API design exists for this project's requirements.",
+    )
     return {
         **saved["api_design"],
         "id": saved["id"],

@@ -3,6 +3,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
+from app.api.artifact_freshness import require_current_requirements
+from app.api.llm import gemini_enabled, generate_gemini_blueprint
 from app.agents.technology_recommendation import recommend_technology
 from app.auth.deps import get_current_user
 from app.models.project import get_project
@@ -11,6 +13,7 @@ from app.models.technology_recommendation import (
     save_technology_recommendation,
 )
 from app.schemas.technology_recommendation import TechnologyRecommendationOut
+from app.schemas.technology_recommendation import TechnologyRecommendation
 
 router = APIRouter(prefix="/api/v1/projects", tags=["technology recommendations"])
 
@@ -58,7 +61,22 @@ async def recommend_project_technology(
             },
         )
 
-    result = recommend_technology(source, project.get("name", "Project"), project.get("domain", ""))
+    if gemini_enabled():
+        result = await generate_gemini_blueprint(
+            "software technology architect. Recommend a compatible, practical technology stack "
+            "and explain alternatives and trade-offs. Do not recommend integrations unsupported "
+            "by the requirements.",
+            {
+                "project_name": project.get("name", "Project"),
+                "domain": project.get("domain", ""),
+                "requirements": source,
+            },
+            TechnologyRecommendation,
+        )
+    else:
+        result = recommend_technology(
+            source, project.get("name", "Project"), project.get("domain", "")
+        )
     saved = await save_technology_recommendation(
         project_id,
         str(user.get("id")),
@@ -81,16 +99,13 @@ async def get_project_technology_recommendation(
     project_id: str,
     user=Depends(get_current_user),
 ):
-    await _get_accessible_project(project_id, user)
-    saved = await get_latest_technology_recommendation(project_id)
-    if not saved:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "code": "recommendation_not_found",
-                "message": "No technology recommendation exists for this project.",
-            },
-        )
+    project = await _get_accessible_project(project_id, user)
+    saved = require_current_requirements(
+        await get_latest_technology_recommendation(project_id),
+        project.get("requirements") or "",
+        "recommendation_not_found",
+        "No current technology recommendation exists for this project's requirements.",
+    )
     return {
         **saved["recommendation"],
         "id": saved["id"],

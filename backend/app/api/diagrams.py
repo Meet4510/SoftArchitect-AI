@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from app.api.artifact_freshness import requirements_match, require_current_requirements
+from app.api.llm import gemini_enabled, generate_gemini_blueprint
 from app.agents.database_design import design_mongodb_schema
 from app.agents.diagrams import design_uml_diagrams
 from app.auth.deps import get_current_user
@@ -11,6 +13,7 @@ from app.schemas.api_design import RestApiDesign
 from app.schemas.diagrams import UmlDiagramSetOut
 from app.schemas.database_design import MongoDatabaseDesign
 from app.schemas.architecture import SoftwareArchitecture
+from app.schemas.diagrams import UmlDiagramSet
 from app.models.database_design import get_latest_database_design, save_database_design
 
 router = APIRouter(prefix="/api/v1/projects", tags=["UML diagrams"])
@@ -47,7 +50,10 @@ async def generate_project_diagrams(project_id: str, user=Depends(get_current_us
     saved_api_design = await get_latest_api_design(project_id)
     saved_database_design = await get_latest_database_design(project_id)
     saved_architecture = await get_latest_architecture(project_id)
-    if not saved_api_design or not saved_database_design or not saved_architecture:
+    if not all(
+        requirements_match(saved, requirements)
+        for saved in (saved_api_design, saved_database_design, saved_architecture)
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -82,13 +88,29 @@ async def generate_project_diagrams(project_id: str, user=Depends(get_current_us
         )
     else:
         database_design = MongoDatabaseDesign(**saved_database_payload)
-    diagrams = design_uml_diagrams(
-        requirements,
-        project.get("name", "Project"),
-        database_design,
-        api_design,
-        architecture,
-    )
+    if gemini_enabled():
+        diagrams = await generate_gemini_blueprint(
+            "UML designer. Return exactly the five required diagram types: use_case, sequence, "
+            "class, entity_relationship, module_hierarchy. Each mermaid_source must start with "
+            "its proper Mermaid diagram declaration. The entity_relationship diagram must be "
+            "a Chen ERD defining classDef erEntity, erRelationship, erAttribute, erKey.",
+            {
+                "project_name": project.get("name", "Project"),
+                "requirements": requirements,
+                "architecture": architecture.dict(),
+                "database_design": database_design.dict(),
+                "api_design": api_design.dict(),
+            },
+            UmlDiagramSet,
+        )
+    else:
+        diagrams = design_uml_diagrams(
+            requirements,
+            project.get("name", "Project"),
+            database_design,
+            api_design,
+            architecture,
+        )
     saved = await save_diagrams(
         project_id,
         str(user.get("id")),
@@ -106,16 +128,13 @@ async def generate_project_diagrams(project_id: str, user=Depends(get_current_us
 
 @router.get("/{project_id}/diagrams", response_model=UmlDiagramSetOut)
 async def get_project_diagrams(project_id: str, user=Depends(get_current_user)):
-    await _get_accessible_project(project_id, user)
-    saved = await get_latest_diagrams(project_id)
-    if not saved:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "code": "diagrams_not_found",
-                "message": "No UML diagrams have been generated for this project.",
-            },
-        )
+    project = await _get_accessible_project(project_id, user)
+    saved = require_current_requirements(
+        await get_latest_diagrams(project_id),
+        project.get("requirements") or "",
+        "diagrams_not_found",
+        "No current UML diagrams exist for this project's requirements.",
+    )
     required_types = {
         "use_case",
         "sequence",

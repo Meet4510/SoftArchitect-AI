@@ -19,6 +19,8 @@ services:
       MONGODB_DATABASE: ${MONGODB_DATABASE:-softarchitect_ai}
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in the root .env file}
       LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.1-flash-lite}
       DEMO_MODE: ${DEMO_MODE:-true}
       CORS_ORIGINS: ${CORS_ORIGINS:-["http://localhost:5173","http://localhost:4173"]}
     depends_on:

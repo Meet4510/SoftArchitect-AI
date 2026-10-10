@@ -9,6 +9,7 @@ import {
   registerUser,
   type AuthSession,
 } from './services/api'
+import { DataLabPage } from './features/data-lab/DataLabPage'
 import { DashboardPage, ProjectWorkspacePage, ProjectsPage, WorkspaceLayout } from './features/workspace/WorkspacePages'
 
 const AUTH_KEY = 'softarchitect_auth'
@@ -76,12 +77,14 @@ export default function App() {
       {session ? (
         <Route element={<WorkspaceLayout session={session} onLogout={() => handleAuth(null)} />}>
           <Route path="/dashboard" element={<DashboardPage session={session} />} />
+          <Route path="/data-lab" element={<DataLabPage />} />
           <Route path="/projects" element={<ProjectsPage session={session} />} />
           <Route path="/projects/:projectId" element={<ProjectWorkspacePage session={session} />} />
         </Route>
       ) : (
         <>
           <Route path="/dashboard" element={<Navigate to="/login" replace />} />
+          <Route path="/data-lab" element={<Navigate to="/login" replace />} />
           <Route path="/projects" element={<Navigate to="/login" replace />} />
           <Route path="/projects/:projectId" element={<Navigate to="/login" replace />} />
         </>
