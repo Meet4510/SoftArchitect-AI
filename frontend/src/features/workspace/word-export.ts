@@ -5,7 +5,13 @@ import {
   ImageRun,
   Packer,
   Paragraph,
+  ShadingType,
+  Table,
+  TableCell,
+  TableRow,
   TextRun,
+  VerticalAlign,
+  WidthType,
 } from 'docx'
 import { renderMermaidDiagram } from './diagram-rendering'
 
@@ -14,8 +20,8 @@ export type WordDiagram = {
   source: string
 }
 
-function parseMarkdown(markdown: string): Paragraph[] {
-  const paragraphs: Paragraph[] = []
+export function parseMarkdown(markdown: string): (Paragraph | Table)[] {
+  const paragraphs: (Paragraph | Table)[] = []
   let inCodeBlock = false
   const codeLines: string[] = []
 
@@ -30,7 +36,24 @@ function parseMarkdown(markdown: string): Paragraph[] {
     codeLines.length = 0
   }
 
-  for (const line of markdown.split(/\r?\n/)) {
+  const lines = markdown.split(/\r?\n/)
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]
+    if (
+      line.trimStart().startsWith('|')
+      && index + 1 < lines.length
+      && isMarkdownTableSeparator(lines[index + 1])
+    ) {
+      const rows = [splitMarkdownTableRow(line)]
+      index += 2
+      while (index < lines.length && lines[index].trimStart().startsWith('|')) {
+        rows.push(splitMarkdownTableRow(lines[index]))
+        index += 1
+      }
+      index -= 1
+      paragraphs.push(createWordTable(rows))
+      continue
+    }
     if (line.trimStart().startsWith('```')) {
       if (inCodeBlock) addCodeBlock()
       inCodeBlock = !inCodeBlock
@@ -75,6 +98,65 @@ function parseMarkdown(markdown: string): Paragraph[] {
   }
   if (inCodeBlock) addCodeBlock()
   return paragraphs
+}
+
+function isMarkdownTableSeparator(line: string): boolean {
+  return /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line)
+}
+
+function splitMarkdownTableRow(line: string): string[] {
+  const cells: string[] = []
+  let cell = ''
+  let escaped = false
+  const content = line.trim().replace(/^\|/, '').replace(/\|$/, '')
+  for (const character of content) {
+    if (character === '|' && !escaped) {
+      cells.push(cell.trim().replace(/\\\|/g, '|'))
+      cell = ''
+    } else {
+      cell += character
+    }
+    escaped = character === '\\' && !escaped
+    if (character !== '\\') escaped = false
+  }
+  cells.push(cell.trim().replace(/\\\|/g, '|'))
+  return cells
+}
+
+function createWordTable(rows: string[][]): Table {
+  const columnCount = Math.max(...rows.map((row) => row.length))
+  const columnWidth = Math.floor(100 / columnCount)
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    columnWidths: Array.from({ length: columnCount }, () => columnWidth),
+    rows: rows.map(
+      (row, rowIndex) =>
+        new TableRow({
+          children: Array.from({ length: columnCount }, (_, columnIndex) => {
+            const isHeader = rowIndex === 0
+            const text = cleanInlineMarkdown(row[columnIndex] ?? '')
+            return new TableCell({
+              width: { size: columnWidth, type: WidthType.PERCENTAGE },
+              verticalAlign: VerticalAlign.CENTER,
+              margins: { top: 70, bottom: 70, left: 70, right: 70 },
+              shading: isHeader
+                ? { type: ShadingType.CLEAR, fill: 'DCEAF2' }
+                : undefined,
+              children: [
+                new Paragraph({
+                  children: [new TextRun({
+                    text,
+                    bold: isHeader,
+                    size: 16,
+                  })],
+                  spacing: { before: 0, after: 0 },
+                }),
+              ],
+            })
+          }),
+        }),
+    ),
+  })
 }
 
 function cleanInlineMarkdown(text: string): string {
@@ -134,30 +216,50 @@ export async function downloadTechnicalBlueprintWord(
   children.push(new Paragraph({ text: 'Architecture and UML diagrams', heading: HeadingLevel.HEADING_1, pageBreakBefore: true }))
 
   for (const [index, diagram] of diagrams.entries()) {
-    const svg = await renderMermaidDiagram(`word-export-${index}`, diagram.source, false)
-    const image = await svgToPng(svg)
-    const maxWidth = 600
-    const maxHeight = 650
-    const scale = Math.min(maxWidth / image.width, maxHeight / image.height, 1)
-    children.push(
-      new Paragraph({
-        text: diagram.title,
-        heading: HeadingLevel.HEADING_2,
-        spacing: { before: 240, after: 120 },
-      }),
-      new Paragraph({
-        alignment: AlignmentType.CENTER,
-        children: [new ImageRun({
-          data: image.data,
-          type: 'png',
-          transformation: {
-            width: Math.round(image.width * scale),
-            height: Math.round(image.height * scale),
-          },
-        })],
-        spacing: { after: 240 },
-      }),
-    )
+    children.push(new Paragraph({
+      text: diagram.title,
+      heading: HeadingLevel.HEADING_2,
+      spacing: { before: 240, after: 120 },
+    }))
+    try {
+      const svg = await renderMermaidDiagram(`word-export-${index}`, diagram.source, false)
+      const image = await svgToPng(svg)
+      const maxWidth = 600
+      const maxHeight = 650
+      const scale = Math.min(maxWidth / image.width, maxHeight / image.height, 1)
+      children.push(
+        new Paragraph({
+          alignment: AlignmentType.CENTER,
+          children: [new ImageRun({
+            data: image.data,
+            type: 'png',
+            transformation: {
+              width: Math.round(image.width * scale),
+              height: Math.round(image.height * scale),
+            },
+          })],
+          spacing: { after: 240 },
+        }),
+      )
+    } catch {
+      children.push(
+        new Paragraph({
+          children: [new TextRun({
+            text: 'This diagram could not be rendered, so its Mermaid source is included for review.',
+            italics: true,
+          })],
+          spacing: { after: 100 },
+        }),
+        new Paragraph({
+          children: [new TextRun({
+            text: diagram.source,
+            font: 'Consolas',
+            size: 18,
+          })],
+          spacing: { after: 180 },
+        }),
+      )
+    }
   }
 
   const document = new Document({

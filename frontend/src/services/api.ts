@@ -79,6 +79,7 @@ export type DatabaseField = {
   bson_type: string
   required: boolean
   description: string
+  default_expression?: string | null
 }
 
 export type CollectionDesign = {
@@ -158,6 +159,7 @@ export type RestApiDesign = {
 export type ProjectDiagrams = {
   id?: string
   project_id: string
+  source_api_design_id?: string
   source_requirements?: string
   created_at: string
   project_summary: string
@@ -870,6 +872,29 @@ export async function fetchProjectDiagrams(token: string, projectId: string, pro
   }
 }
 
+export async function updateProjectDiagrams(
+  token: string,
+  diagrams: ProjectDiagrams,
+): Promise<ProjectDiagrams> {
+  if (token === DEMO_TOKEN) {
+    return saveDemoDiagrams({
+      ...diagrams,
+      created_at: new Date().toISOString(),
+    })
+  }
+
+  const response = await api.put(
+    `/api/v1/projects/${encodeURIComponent(diagrams.project_id)}/diagrams`,
+    {
+      project_summary: diagrams.project_summary,
+      diagrams: diagrams.diagrams,
+      design_decisions: diagrams.design_decisions,
+    },
+    { headers: { Authorization: ['Bearer', token].join(' ') } },
+  )
+  return response.data as ProjectDiagrams
+}
+
 export async function fetchProjectDiagramsForWord(
   token: string,
   project: Project,
@@ -1012,7 +1037,10 @@ export async function generateProjectDocumentation(token: string, project: Proje
     const response = await api.post(
       `/api/v1/projects/${encodeURIComponent(project.id)}/documentation/generate`,
       { prompt: prompt.trim() },
-      { headers: { Authorization: ['Bearer', token].join(' ') } },
+      {
+        headers: { Authorization: ['Bearer', token].join(' ') },
+        timeout: 600_000,
+      },
     )
     return response.data as ProjectDocumentation
   } catch (error) {

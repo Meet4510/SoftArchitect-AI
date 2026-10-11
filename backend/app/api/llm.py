@@ -15,9 +15,15 @@ async def generate_gemini_blueprint(
     task: str,
     context: dict,
     output_model: Type[BaseModel],
+    max_output_tokens: int = 12288,
 ) -> BaseModel:
     try:
-        return await generate_structured_output(task, context, output_model)
+        return await generate_structured_output(
+            task,
+            context,
+            output_model,
+            max_output_tokens=max_output_tokens,
+        )
     except GeminiProviderError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,

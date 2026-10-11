@@ -10,6 +10,7 @@ class DatabaseField(BaseModel):
     bson_type: str = Field(..., min_length=1)
     required: bool
     description: str = Field(..., min_length=1)
+    default_expression: Optional[str] = None
 
 
 class DatabaseForeignKey(BaseModel):

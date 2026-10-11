@@ -21,7 +21,10 @@ class DiagramArtifact(BaseModel):
             "module_hierarchy": "flowchart",
         }.get(values.get("diagram_type"))
         if not expected_prefix or not source.startswith(expected_prefix):
-            raise ValueError("Mermaid source must match the declared diagram type")
+            raise ValueError(
+                f"Mermaid source for {values.get('diagram_type')} must start with "
+                f"'{expected_prefix}'"
+            )
         if values.get("diagram_type") == "entity_relationship" and not all(
             marker in source
             for marker in ("classDef erEntity", "classDef erRelationship", "classDef erAttribute", "classDef erKey")

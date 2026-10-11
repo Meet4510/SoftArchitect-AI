@@ -56,6 +56,9 @@ async def test_gemini_provider_sends_requirements_and_validates_structured_respo
     assert captured["headers"]["x-goog-api-key"] == "test-key"
     assert "school platform manages students" in captured["body"]["contents"][0]["parts"][0]["text"]
     assert captured["body"]["generationConfig"]["responseMimeType"] == "application/json"
+    response_schema = captured["body"]["generationConfig"]["responseJsonSchema"]
+    assert "definitions" not in response_schema
+    assert "functional_requirements" in response_schema["properties"]
 
 
 @pytest.mark.asyncio
@@ -78,12 +81,40 @@ async def test_gemini_provider_rejects_invalid_model_output(monkeypatch):
             json={"candidates": [{"content": {"parts": [{"text": json.dumps(invalid)}]}}]},
         )
 
-    with pytest.raises(GeminiProviderError, match="did not match the required schema"):
+    with pytest.raises(GeminiProviderError, match="did not match the required schema after one correction attempt"):
         await generate_requirement_analysis(
             "A school platform manages students and courses.",
             "School Records",
             transport=httpx.MockTransport(handler),
         )
+
+
+@pytest.mark.asyncio
+async def test_gemini_provider_retries_with_validation_feedback(monkeypatch):
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(settings, "GEMINI_MODEL", "gemini-test-model")
+    captured_prompts = []
+    invalid = {**ANALYSIS, "functional_requirements": []}
+
+    async def handler(request):
+        body = json.loads(request.content)
+        captured_prompts.append(body["contents"][0]["parts"][0]["text"])
+        output = invalid if len(captured_prompts) == 1 else ANALYSIS
+        return httpx.Response(
+            200,
+            json={"candidates": [{"content": {"parts": [{"text": json.dumps(output)}]}}]},
+        )
+
+    result = await generate_requirement_analysis(
+        "A school platform manages students and courses.",
+        "School Records",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert result.project_summary == ANALYSIS["project_summary"]
+    assert len(captured_prompts) == 2
+    assert "functional_requirements: Analysis lists must contain at least one item" in captured_prompts[1]
+    assert json.dumps(invalid) in captured_prompts[1]
 
 
 @pytest.mark.asyncio
@@ -115,6 +146,7 @@ async def test_gemini_provider_generates_other_validated_blueprint_models(monkey
         {"project_name": "School", "requirements": "Manage courses and student records."},
         TechnologyRecommendation,
         transport=httpx.MockTransport(handler),
+        max_output_tokens=20000,
     )
 
     assert isinstance(result, TechnologyRecommendation)
@@ -122,7 +154,7 @@ async def test_gemini_provider_generates_other_validated_blueprint_models(monkey
     prompt = captured["body"]["contents"][0]["parts"][0]["text"]
     assert "TechnologyRecommendation" in prompt
     assert "Manage courses and student records." in prompt
-    assert captured["body"]["generationConfig"]["maxOutputTokens"] == 12288
+    assert captured["body"]["generationConfig"]["maxOutputTokens"] == 20000
 
 
 @pytest.mark.asyncio
@@ -160,10 +192,15 @@ async def test_gemini_provider_explains_unavailable_models(monkeypatch):
 @pytest.mark.asyncio
 async def test_gemini_provider_explains_temporary_overload(monkeypatch):
     monkeypatch.setattr(settings, "GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(settings, "GEMINI_MODEL", "gemini-primary-model")
+    monkeypatch.setattr(settings, "GEMINI_FALLBACK_MODEL", "gemini-fallback-model")
+    requested_models = []
 
     async def handler(request):
-        del request
-        return httpx.Response(503, json={"error": {"message": "temporarily unavailable"}})
+        requested_models.append(request.url.path.split("/")[-1].removesuffix(":generateContent"))
+        if len(requested_models) == 1:
+            return httpx.Response(503, json={"error": {"message": "temporarily unavailable"}})
+        return httpx.Response(503, json={"error": {"message": "fallback temporarily unavailable"}})
 
     with pytest.raises(GeminiProviderError, match="temporarily overloaded"):
         await generate_requirement_analysis(
@@ -171,3 +208,34 @@ async def test_gemini_provider_explains_temporary_overload(monkeypatch):
             "School Records",
             transport=httpx.MockTransport(handler),
         )
+    assert requested_models == ["gemini-primary-model", "gemini-fallback-model"]
+
+
+@pytest.mark.asyncio
+async def test_gemini_provider_falls_back_when_primary_model_is_overloaded(monkeypatch):
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(settings, "GEMINI_MODEL", "gemini-primary-model")
+    monkeypatch.setattr(settings, "GEMINI_FALLBACK_MODEL", "gemini-fallback-model")
+    requested_models = []
+
+    async def handler(request):
+        requested_models.append(request.url.path.split("/")[-1].removesuffix(":generateContent"))
+        if len(requested_models) == 1:
+            return httpx.Response(503, json={"error": {"message": "temporarily unavailable"}})
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [{
+                    "content": {"parts": [{"text": json.dumps(ANALYSIS)}]},
+                }],
+            },
+        )
+
+    result = await generate_requirement_analysis(
+        "A school platform manages students and courses.",
+        "School Records",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert result.project_summary == ANALYSIS["project_summary"]
+    assert requested_models == ["gemini-primary-model", "gemini-fallback-model"]

@@ -48,6 +48,7 @@ import {
   getApiErrorMessage,
   recommendProjectTechnology,
   updateProject,
+  updateProjectDiagrams,
   type AuthSession,
   type ApiEndpoint,
   type ApiField,
@@ -69,7 +70,7 @@ const fieldClass =
 
 const projectsKey = (token: string) => ['projects', token]
 const DEFAULT_DOCUMENTATION_PROMPT =
-  'Create a clear developer handoff for the project. Include the requirements, architecture, database model, API endpoints, implementation roadmap, key risks, security and deployment guidance. Use concise professional language and organize it with useful headings.'
+  'Create a comprehensive MCA final-year software project report using the supplied project details and saved blueprints. Follow an academic report structure: abstract, introduction, literature review, system analysis, design, implementation, testing, results and discussion, conclusion and future scope, and references. Include requirements, feasibility, architecture, database, API, UML diagrams, modules, roadmap, risks, and deployment. Do not invent student or guide details, citations, screenshots, test results, or implementation outcomes.'
 
 export function WorkspaceLayout({
   session,
@@ -620,6 +621,11 @@ export function ProjectWorkspacePage({ session }: { session: AuthSession }) {
     onSuccess: (result) => { setDiagrams(result); setError(null) },
     onError: reportError,
   })
+  const saveDiagrams = useMutation({
+    mutationFn: (updated: ProjectDiagrams) => updateProjectDiagrams(session.token, updated),
+    onSuccess: (result) => { setDiagrams(result); setError(null) },
+    onError: reportError,
+  })
   const loadDatasetDesign = useMutation({
     mutationFn: () => fetchProjectDatabaseDesign(session.token, projectId),
     onSuccess: (design) => {
@@ -746,9 +752,16 @@ export function ProjectWorkspacePage({ session }: { session: AuthSession }) {
       {architecture ? <ArchitecturePanel architecture={architecture} onClose={() => setArchitecture(null)} /> : null}
       {databaseDesign ? <DatabasePanel design={databaseDesign} onClose={() => setDatabaseDesign(null)} /> : null}
       {apiDesign ? <ApiDesignPanel design={apiDesign} onClose={() => setApiDesign(null)} /> : null}
-      {diagrams ? <DiagramsPanel diagrams={diagrams} onClose={() => setDiagrams(null)} /> : null}
+      {diagrams ? (
+        <DiagramsPanel
+          diagrams={diagrams}
+          saving={saveDiagrams.isPending}
+          onSave={(updated) => saveDiagrams.mutateAsync(updated)}
+          onClose={() => setDiagrams(null)}
+        />
+      ) : null}
       {dataset ? <DatasetPanel dataset={dataset} onClose={() => setDataset(null)} /> : null}
-      {documentation ? <DocumentationPanel documentation={documentation} onClose={() => setDocumentation(null)} onDownloadWord={() => void handleWordExport()} wordExporting={wordExporting} /> : null}
+      {documentation ? <DocumentationPanel documentation={documentation} databaseDesign={databaseDesign} onClose={() => setDocumentation(null)} onDownloadWord={() => void handleWordExport()} wordExporting={wordExporting} /> : null}
     </div>
   )
 }
@@ -1127,11 +1140,13 @@ function DatasetPanel({ dataset, onClose }: { dataset: SyntheticDataset; onClose
 
 function DocumentationPanel({
   documentation,
+  databaseDesign,
   onClose,
   onDownloadWord,
   wordExporting,
 }: {
   documentation: ProjectDocumentation
+  databaseDesign: MongoDatabaseDesign | null
   onClose: () => void
   onDownloadWord: () => void
   wordExporting: boolean
@@ -1187,6 +1202,7 @@ function DocumentationPanel({
           </article>
         ))}
       </div>
+      {databaseDesign ? <DocumentationDatabaseTables design={databaseDesign} /> : null}
       <div className="grid gap-3 lg:grid-cols-2">
         {documentation.roadmap.map((phase) => (
           <article key={phase.title} className="rounded-xl border border-slate-800 bg-slate-900/50 p-4">
@@ -1215,12 +1231,83 @@ function DocumentationPanel({
           <pre className="mt-2 overflow-auto rounded-xl border border-slate-800 bg-slate-950 p-4 text-xs leading-5 text-slate-300"><code>{documentation.folder_structure}</code></pre>
         </div>
         <details className="min-w-0">
-          <summary className="cursor-pointer text-sm font-semibold text-slate-200 hover:text-white">Preview complete Markdown</summary>
+          <summary className="cursor-pointer text-sm font-semibold text-slate-200 hover:text-white">Preview complete report (Markdown)</summary>
           <pre className="mt-2 max-h-[32rem] overflow-auto rounded-xl border border-slate-800 bg-slate-950 p-4 text-xs leading-5 text-slate-300"><code>{documentation.markdown}</code></pre>
         </details>
       </div>
     </ArtifactPanel>
   )
+}
+
+function DocumentationDatabaseTables({ design }: { design: MongoDatabaseDesign }) {
+  return (
+    <section aria-label="Database design tables" className="space-y-4">
+      <div>
+        <h3 className="text-sm font-semibold text-white">Database design</h3>
+        <p className="mt-1 text-xs text-slate-400">MongoDB database: <code>{design.database_name}</code></p>
+      </div>
+      {design.collections.map((collection) => (
+        <article key={collection.name} className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/50">
+          <div className="border-b border-slate-800 px-4 py-3">
+            <h4 className="font-mono text-sm font-semibold text-cyan-200">{collection.name}</h4>
+            <p className="mt-1 text-xs text-slate-400">{collection.purpose}</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px] border-collapse text-left text-xs">
+              <thead className="bg-slate-950/80 text-slate-400">
+                <tr>
+                  {['Field', 'BSON type', 'Required', 'Description'].map((heading) => (
+                    <th key={heading} scope="col" className="px-3 py-2 font-semibold">{heading}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {collection.fields.map((field) => (
+                  <tr key={field.name} className="border-t border-slate-800 text-slate-200">
+                    <td className="whitespace-nowrap px-3 py-2 font-mono text-cyan-100">{field.name}</td>
+                    <td className="whitespace-nowrap px-3 py-2 font-mono">{field.bson_type}</td>
+                    <td className="px-3 py-2">{field.required ? 'Yes' : 'No'}</td>
+                    <td className="min-w-64 px-3 py-2 text-slate-300">
+                      {documentationDatabaseFieldDescription(collection, field)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="space-y-1 border-t border-slate-800 px-4 py-3 text-xs text-slate-400">
+            <p><strong className="text-slate-300">Indexes:</strong> {collection.indexes.join(', ') || 'None specified'}</p>
+            <p><strong className="text-slate-300">Embedding:</strong> {collection.embedding_strategy}</p>
+          </div>
+        </article>
+      ))}
+    </section>
+  )
+}
+
+function documentationDatabaseFieldDescription(
+  collection: MongoDatabaseDesign['collections'][number],
+  field: MongoDatabaseDesign['collections'][number]['fields'][number],
+): string {
+  const details = [field.description]
+  if (field.name === collection.primary_key && !field.description.toLowerCase().includes('primary key')) {
+    details.push('Primary key.')
+  }
+  const uniqueIndexes = collection.indexes
+    .filter((index) => /^unique\s*:/i.test(index))
+    .map((index) => index.replace(/^unique\s*:\s*/i, '').split(',').map((name) => name.trim()))
+    .filter((names) => names.some((name) => name.split(/\s+/).pop() === field.name))
+  for (const names of uniqueIndexes) {
+    details.push(names.length === 1 ? 'Unique index.' : `Part of unique compound index on ${names.join(', ')}.`)
+  }
+  const references = collection.foreign_keys.filter(
+    (foreignKey) => foreignKey.field === field.name || foreignKey.field.startsWith(`${field.name}.`),
+  )
+  for (const reference of references) {
+    details.push(`Reference: ${reference.references_collection}.${reference.references_field}.`)
+  }
+  if (field.default_expression) details.push(`Default: ${field.default_expression}.`)
+  return details.join(' ')
 }
 
 function ApiDesignPanel({ design, onClose }: { design: RestApiDesign; onClose: () => void }) {
@@ -1319,15 +1406,116 @@ function ApiDesignPanel({ design, onClose }: { design: RestApiDesign; onClose: (
   )
 }
 
-function DiagramsPanel({ diagrams, onClose }: { diagrams: ProjectDiagrams; onClose: () => void }) {
+function DiagramsPanel({
+  diagrams,
+  saving,
+  onSave,
+  onClose,
+}: {
+  diagrams: ProjectDiagrams
+  saving: boolean
+  onSave: (diagrams: ProjectDiagrams) => Promise<ProjectDiagrams>
+  onClose: () => void
+}) {
+  const [editingType, setEditingType] = useState<ProjectDiagrams['diagrams'][number]['diagram_type'] | null>(null)
+  const [draftSource, setDraftSource] = useState('')
+  const [saveError, setSaveError] = useState('')
+
+  const startEditing = (diagram: ProjectDiagrams['diagrams'][number]) => {
+    setEditingType(diagram.diagram_type)
+    setDraftSource(diagram.mermaid_source)
+    setSaveError('')
+  }
+
+  const saveEdit = async () => {
+    if (!editingType) return
+    const updated = {
+      ...diagrams,
+      diagrams: diagrams.diagrams.map((diagram) =>
+        diagram.diagram_type === editingType
+          ? { ...diagram, mermaid_source: draftSource }
+          : diagram,
+      ),
+    }
+    try {
+      await renderMermaidDiagram(
+        `uml-edit-${diagrams.project_id}-${editingType}`,
+        draftSource,
+      )
+    } catch {
+      setSaveError('This Mermaid source is invalid and cannot be saved. Correct the syntax and try again.')
+      return
+    }
+    try {
+      await onSave(updated)
+      setEditingType(null)
+      setSaveError('')
+    } catch (cause) {
+      setSaveError(getApiErrorMessage(cause))
+    }
+  }
+
   return (
-    <ArtifactPanel eyebrow="UML and workflow diagrams · Demo agent" title="Project diagrams" summary={diagrams.project_summary} date={diagrams.created_at} tone="indigo" onClose={onClose}>
+    <ArtifactPanel eyebrow="UML and workflow diagrams" title="Project diagrams" summary={diagrams.project_summary} date={diagrams.created_at} tone="indigo" onClose={onClose}>
       <div className="grid gap-4">
         {diagrams.diagrams.map((diagram) => (
           <article key={diagram.diagram_type} className="min-w-0 rounded-xl border border-slate-800 bg-slate-900/50 p-4">
-            <h3 className="font-semibold text-indigo-200">{diagram.title}</h3>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="font-semibold text-indigo-200">{diagram.title}</h3>
+              {editingType === diagram.diagram_type ? (
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void saveEdit()}
+                    disabled={saving}
+                    className="rounded-lg bg-indigo-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-400 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    {saving ? 'Saving…' : 'Save diagram'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setEditingType(null); setSaveError('') }}
+                    disabled={saving}
+                    className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-800 disabled:opacity-60"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => startEditing(diagram)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 hover:border-indigo-400/50 hover:text-white"
+                >
+                  <Pencil className="h-3.5 w-3.5" /> Edit diagram
+                </button>
+              )}
+            </div>
             <p className="mt-1 text-sm text-slate-400">{diagram.description}</p>
-            <MermaidDiagram id={`uml-${diagrams.project_id}-${diagram.diagram_type}`} source={diagram.mermaid_source} label={diagram.title} />
+            {editingType === diagram.diagram_type ? (
+              <div className="mt-4">
+                <label className="block text-xs font-medium text-slate-300" htmlFor={`diagram-source-${diagram.diagram_type}`}>
+                  Mermaid source
+                </label>
+                <textarea
+                  id={`diagram-source-${diagram.diagram_type}`}
+                  aria-label={`${diagram.title} Mermaid source`}
+                  value={draftSource}
+                  onChange={(event) => setDraftSource(event.target.value)}
+                  rows={12}
+                  spellCheck={false}
+                  className={`${fieldClass} mt-2 resize-y font-mono text-xs leading-5`}
+                />
+                <MermaidDiagram
+                  id={`uml-preview-${diagrams.project_id}-${diagram.diagram_type}`}
+                  source={draftSource}
+                  label={`${diagram.title} preview`}
+                />
+                {saveError ? <p role="alert" className="mt-2 text-sm text-rose-300">{saveError}</p> : null}
+              </div>
+            ) : (
+              <MermaidDiagram id={`uml-${diagrams.project_id}-${diagram.diagram_type}`} source={diagram.mermaid_source} label={diagram.title} />
+            )}
             {diagram.diagram_type === 'entity_relationship' ? (
               <ul aria-label="Entity-Relationship diagram notation" className="mt-3 flex flex-wrap gap-2 text-xs text-slate-300">
                 <li className="rounded-md border border-cyan-400/30 bg-slate-950 px-2.5 py-1.5"><span className="font-semibold text-cyan-200">Rectangle</span> · Entity</li>

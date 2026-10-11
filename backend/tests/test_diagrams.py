@@ -94,7 +94,7 @@ def test_uml_schema_rejects_missing_types_and_mismatched_mermaid():
         architecture,
     ).dict()
     payload["diagrams"][0]["mermaid_source"] = "sequenceDiagram"
-    with pytest.raises(ValueError, match="match the declared diagram type"):
+    with pytest.raises(ValueError, match="Mermaid source for use_case must start with 'flowchart'"):
         UmlDiagramSet(**payload)
 
 
@@ -212,6 +212,84 @@ async def test_diagram_routes_persist_require_api_design_and_enforce_ownership(m
         app.dependency_overrides[get_current_user] = lambda: {"id": "user-2", "role": "USER"}
         async with AsyncClient(app=app, base_url="http://test") as client:
             forbidden = await client.post("/api/v1/projects/project-1/diagrams/generate")
+            assert forbidden.status_code == 403
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_diagram_edit_saves_validated_version_and_enforces_ownership(monkeypatch):
+    project = {
+        "id": "project-edit",
+        "user_id": "user-1",
+        "name": "QuickBite",
+        "requirements": REQUIREMENTS,
+    }
+    database_design, api_design, architecture = build_source_designs()
+    diagram_set = design_uml_diagrams(
+        REQUIREMENTS, "QuickBite", database_design, api_design, architecture
+    )
+    latest = {
+        "id": "diagrams-original",
+        "source_requirements": REQUIREMENTS,
+        "source_api_design_id": "api-design-1",
+        "diagram_set": diagram_set.dict(),
+    }
+    saved = {}
+
+    async def fake_get_project(project_id):
+        return project if project_id == "project-edit" else None
+
+    async def fake_get_latest(project_id):
+        return latest
+
+    async def fake_save(project_id, user_id, source, api_design_id, updated_set):
+        saved["data"] = {
+            "id": "diagrams-edited",
+            "project_id": project_id,
+            "source_requirements": source,
+            "source_api_design_id": api_design_id,
+            "diagram_set": updated_set.dict(),
+            "created_at": datetime.utcnow(),
+        }
+        return saved["data"]
+
+    monkeypatch.setattr("app.api.diagrams.get_project", fake_get_project)
+    monkeypatch.setattr("app.api.diagrams.get_latest_diagrams", fake_get_latest)
+    monkeypatch.setattr("app.api.diagrams.save_diagrams", fake_save)
+    app.dependency_overrides[get_current_user] = lambda: {"id": "user-1", "role": "USER"}
+
+    try:
+        edited = diagram_set.dict()
+        edited["diagrams"][0]["mermaid_source"] += '\n  Customer -->|"Edits diagrams"| System'
+        async with AsyncClient(app=app, base_url="http://test") as client:
+            response = await client.put(
+                "/api/v1/projects/project-edit/diagrams",
+                json=edited,
+            )
+            assert response.status_code == 200
+            assert response.json()["id"] == "diagrams-edited"
+            assert response.json()["diagrams"][0]["mermaid_source"].endswith(
+                'Customer -->|"Edits diagrams"| System'
+            )
+            assert saved["data"]["source_api_design_id"] == "api-design-1"
+
+            invalid = {**edited, "diagrams": edited["diagrams"][:-1]}
+            invalid_response = await client.put(
+                "/api/v1/projects/project-edit/diagrams",
+                json=invalid,
+            )
+            assert invalid_response.status_code == 422
+
+        app.dependency_overrides[get_current_user] = lambda: {
+            "id": "another-user",
+            "role": "USER",
+        }
+        async with AsyncClient(app=app, base_url="http://test") as client:
+            forbidden = await client.put(
+                "/api/v1/projects/project-edit/diagrams",
+                json=edited,
+            )
             assert forbidden.status_code == 403
     finally:
         app.dependency_overrides.clear()

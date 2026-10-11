@@ -21,6 +21,7 @@ services:
       LLM_PROVIDER: ${LLM_PROVIDER:-mock}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.1-flash-lite}
+      GEMINI_FALLBACK_MODEL: ${GEMINI_FALLBACK_MODEL:-gemini-3.5-flash-lite}
       DEMO_MODE: ${DEMO_MODE:-true}
       CORS_ORIGINS: ${CORS_ORIGINS:-["http://localhost:5173","http://localhost:4173"]}
     depends_on:

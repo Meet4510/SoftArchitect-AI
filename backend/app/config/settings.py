@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     LLM_PROVIDER: str = "mock"
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-3.1-flash-lite"
+    GEMINI_FALLBACK_MODEL: str = "gemini-3.5-flash-lite"
     DEMO_MODE: bool = True
     CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:4173"]
 

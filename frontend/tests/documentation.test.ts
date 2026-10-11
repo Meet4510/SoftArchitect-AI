@@ -3,6 +3,7 @@ import { demoProjects } from '../src/lib/demo-data'
 import {
   fetchProjectDocumentation,
   fetchProjectApiDesign,
+  fetchProjectDiagrams,
   generateProjectApiDesign,
   generateProjectArchitecture,
   generateProjectDatabaseDesign,
@@ -10,6 +11,7 @@ import {
   generateProjectDocumentation,
   recommendProjectTechnology,
   updateProject,
+  updateProjectDiagrams,
 } from '../src/services/api'
 
 const demoToken = 'demo-token'
@@ -91,6 +93,26 @@ describe('Demo Mode project documentation', () => {
     expect(useCase?.mermaid_source).toContain('Run AI engineering workflow')
     expect(useCase?.mermaid_source).toContain('Review and approve proposed changes')
     expect(JSON.stringify(diagrams.diagrams)).not.toContain('restaurants')
+  })
+
+  it('saves edited Mermaid source for Demo Mode diagrams', async () => {
+    const generated = await generateProjectDiagrams(demoToken, project)
+    const edited = {
+      ...generated,
+      diagrams: generated.diagrams.map((diagram) =>
+        diagram.diagram_type === 'use_case'
+          ? { ...diagram, mermaid_source: `${diagram.mermaid_source}\n  User -->|Edits| System` }
+          : diagram,
+      ),
+    }
+
+    const saved = await updateProjectDiagrams(demoToken, edited)
+    const loaded = await fetchProjectDiagrams(demoToken, project.id, project)
+
+    expect(saved.diagrams.find((diagram) => diagram.diagram_type === 'use_case')?.mermaid_source)
+      .toContain('User -->|Edits| System')
+    expect(loaded.diagrams.find((diagram) => diagram.diagram_type === 'use_case')?.mermaid_source)
+      .toContain('User -->|Edits| System')
   })
 
   it('invalidates stale Demo Mode artifacts when project requirements change', async () => {
